@@ -1,5 +1,5 @@
 # Delivery_simulation
-## Project Plan: Interactive Web Map with Routing and Animated Marker
+## Project Plan: Interactive Web Map with Routing and Simulation
 
 ### Overview
 Build a web interface using Leaflet with OpenStreetMap tiles. Users choose an origin and destination on the map; the app requests a route from a locally running OSRM server (`http://192.168.1.25:5001`) and displays the route, distance, and travel time. A marker animates along the route at an average speed of 20 km/h.
