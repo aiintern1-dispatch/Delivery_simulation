@@ -1,0 +1,457 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { Play, Pause, MapPin, Truck, Users, Clock, Database } from 'lucide-react';
+
+// Simulate database operations
+const simulateDatabase = {
+  drivers: [],
+  orders: [],
+  
+  saveDriver: (driver) => {
+    const existing = simulateDatabase.drivers.findIndex(d => d.id === driver.id);
+    if (existing >= 0) {
+      simulateDatabase.drivers[existing] = driver;
+    } else {
+      simulateDatabase.drivers.push(driver);
+    }
+  },
+  
+  saveOrder: (order) => {
+    simulateDatabase.orders.push(order);
+  },
+  
+  getAvailableDrivers: () => {
+    return simulateDatabase.drivers.filter(d => d.status === 'available');
+  },
+  
+  getWaitingOrders: () => {
+    return simulateDatabase.orders.filter(o => o.status === 'waiting');
+  }
+};
+
+// High-demand hotspot hexagons
+const HOTSPOTS = [
+  { id: 'h1', lat: 40.7589, lng: -73.9851, demand: 0.8, name: 'Times Square' },
+  { id: 'h2', lat: 40.7505, lng: -73.9934, demand: 0.7, name: 'Herald Square' },
+  { id: 'h3', lat: 40.7614, lng: -73.9776, demand: 0.6, name: 'Central Park South' },
+  { id: 'h4', lat: 40.7282, lng: -73.7949, demand: 0.9, name: 'JFK Area' },
+  { id: 'h5', lat: 40.7580, lng: -73.9855, demand: 0.5, name: 'Broadway District' }
+];
+
+const AutoOrderSystem = () => {
+  const [drivers, setDrivers] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [stats, setStats] = useState({
+    totalOrders: 0,
+    completedOrders: 0,
+    activeDrivers: 0,
+    averageDeliveryTime: 0
+  });
+
+  // Calculate distance between two points (Haversine formula)
+  const calculateDistance = (lat1, lng1, lat2, lng2) => {
+    const R = 6371; // Earth's radius in km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLng/2) * Math.sin(dLng/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  };
+
+  // Find nearest available driver
+  const findNearestDriver = (pickupLat, pickupLng) => {
+    const availableDrivers = drivers.filter(d => d.status === 'available');
+    if (availableDrivers.length === 0) return null;
+
+    let nearestDriver = null;
+    let minDistance = Infinity;
+
+    availableDrivers.forEach(driver => {
+      const distance = calculateDistance(pickupLat, pickupLng, driver.lat, driver.lng);
+      if (distance < minDistance) {
+        minDistance = distance;
+        nearestDriver = driver;
+      }
+    });
+
+    return { driver: nearestDriver, distance: minDistance };
+  };
+
+  // Generate random coordinates within NYC area
+  const generateRandomCoordinates = () => {
+    const nycBounds = {
+      north: 40.9176,
+      south: 40.4774,
+      east: -73.7004,
+      west: -74.2591
+    };
+    
+    const lat = Math.random() * (nycBounds.north - nycBounds.south) + nycBounds.south;
+    const lng = Math.random() * (nycBounds.east - nycBounds.west) + nycBounds.west;
+    
+    return { lat: parseFloat(lat.toFixed(6)), lng: parseFloat(lng.toFixed(6)) };
+  };
+
+  // Generate a new order
+  const generateOrder = useCallback(() => {
+    const pickup = generateRandomCoordinates();
+    const destination = generateRandomCoordinates();
+    
+    const nearestDriverResult = findNearestDriver(pickup.lat, pickup.lng);
+    
+    if (!nearestDriverResult) {
+      console.log('No available drivers for new order');
+      return;
+    }
+
+    const { driver, distance: pickupDistance } = nearestDriverResult;
+    const deliveryDistance = calculateDistance(pickup.lat, pickup.lng, destination.lat, destination.lng);
+    const totalDistance = pickupDistance + deliveryDistance;
+    const speed = 25 + Math.random() * 15; // 25-40 km/h average speed
+    const estimatedTime = Math.round((totalDistance / speed) * 60); // in minutes
+
+    const order = {
+      id: `order_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+      driverId: driver.id,
+      driverName: driver.name,
+      status: 'assigned',
+      pickup: pickup,
+      destination: destination,
+      pickupDistance: parseFloat(pickupDistance.toFixed(2)),
+      deliveryDistance: parseFloat(deliveryDistance.toFixed(2)),
+      totalDistance: parseFloat(totalDistance.toFixed(2)),
+      speed: parseFloat(speed.toFixed(1)),
+      estimatedTime: estimatedTime,
+      createdAt: new Date().toISOString(),
+      assignedAt: new Date().toISOString()
+    };
+
+    // Save to database
+    simulateDatabase.saveOrder(order);
+    
+    // Update driver status
+    const updatedDriver = { ...driver, status: 'busy', currentOrderId: order.id };
+    simulateDatabase.saveDriver(updatedDriver);
+
+    setOrders(prev => [...prev, order]);
+    setDrivers(prev => prev.map(d => d.id === driver.id ? updatedDriver : d));
+
+    // Simulate order completion
+    setTimeout(() => {
+      completeOrder(order.id);
+    }, estimatedTime * 100); // Faster simulation
+
+    console.log(`Order ${order.id} generated and assigned to ${driver.name}`);
+  }, [drivers]);
+
+  // Complete an order and reassign driver
+  const completeOrder = (orderId) => {
+    const order = orders.find(o => o.id === orderId);
+    if (!order) return;
+
+    // Update order status
+    setOrders(prev => prev.map(o => 
+      o.id === orderId ? { ...o, status: 'completed', completedAt: new Date().toISOString() } : o
+    ));
+
+    // Find waiting orders
+    const waitingOrders = orders.filter(o => o.status === 'waiting');
+    const driver = drivers.find(d => d.id === order.driverId);
+    
+    if (!driver) return;
+
+    let updatedDriver;
+
+    if (waitingOrders.length > 0) {
+      // Assign to nearest waiting order
+      let nearestOrder = null;
+      let minDistance = Infinity;
+
+      waitingOrders.forEach(waitingOrder => {
+        const distance = calculateDistance(
+          order.destination.lat, order.destination.lng,
+          waitingOrder.pickup.lat, waitingOrder.pickup.lng
+        );
+        if (distance < minDistance) {
+          minDistance = distance;
+          nearestOrder = waitingOrder;
+        }
+      });
+
+      if (nearestOrder) {
+        // Assign driver to waiting order
+        setOrders(prev => prev.map(o => 
+          o.id === nearestOrder.id ? { ...o, status: 'assigned', driverId: driver.id, assignedAt: new Date().toISOString() } : o
+        ));
+        updatedDriver = { ...driver, currentOrderId: nearestOrder.id, lat: order.destination.lat, lng: order.destination.lng };
+        
+        // Simulate completion of reassigned order
+        setTimeout(() => {
+          completeOrder(nearestOrder.id);
+        }, nearestOrder.estimatedTime * 100);
+      }
+    } else {
+      // Send driver to nearest hotspot
+      let nearestHotspot = null;
+      let minDistance = Infinity;
+
+      HOTSPOTS.forEach(hotspot => {
+        const distance = calculateDistance(
+          order.destination.lat, order.destination.lng,
+          hotspot.lat, hotspot.lng
+        );
+        const weightedDistance = distance / hotspot.demand; // Prefer high-demand areas
+        if (weightedDistance < minDistance) {
+          minDistance = weightedDistance;
+          nearestHotspot = hotspot;
+        }
+      });
+
+      updatedDriver = {
+        ...driver,
+        status: 'available',
+        currentOrderId: null,
+        lat: nearestHotspot.lat,
+        lng: nearestHotspot.lng,
+        currentHotspot: nearestHotspot.name
+      };
+    }
+
+    simulateDatabase.saveDriver(updatedDriver);
+    setDrivers(prev => prev.map(d => d.id === driver.id ? updatedDriver : d));
+  };
+
+  // Initialize drivers
+  useEffect(() => {
+    const initialDrivers = [
+      { id: 'driver_1', name: 'John Smith', status: 'available', lat: 40.7589, lng: -73.9851, currentHotspot: 'Times Square' },
+      { id: 'driver_2', name: 'Sarah Johnson', status: 'available', lat: 40.7505, lng: -73.9934, currentHotspot: 'Herald Square' },
+      { id: 'driver_3', name: 'Mike Chen', status: 'available', lat: 40.7614, lng: -73.9776, currentHotspot: 'Central Park South' },
+      { id: 'driver_4', name: 'Emily Davis', status: 'available', lat: 40.7282, lng: -73.7949, currentHotspot: 'JFK Area' },
+      { id: 'driver_5', name: 'Carlos Rodriguez', status: 'available', lat: 40.7580, lng: -73.9855, currentHotspot: 'Broadway District' }
+    ];
+
+    initialDrivers.forEach(driver => simulateDatabase.saveDriver(driver));
+    setDrivers(initialDrivers);
+  }, []);
+
+  // Order generation interval
+  useEffect(() => {
+    let interval;
+    
+    if (isGenerating) {
+      const generateOrderWithRandomInterval = () => {
+        generateOrder();
+        // Random interval between 3-10 seconds
+        const nextInterval = (3 + Math.random() * 7) * 1000;
+        interval = setTimeout(generateOrderWithRandomInterval, nextInterval);
+      };
+      
+      // Start first order generation
+      generateOrderWithRandomInterval();
+    }
+
+    return () => {
+      if (interval) clearTimeout(interval);
+    };
+  }, [isGenerating, generateOrder]);
+
+  // Update stats
+  useEffect(() => {
+    const totalOrders = orders.length;
+    const completedOrders = orders.filter(o => o.status === 'completed').length;
+    const activeDrivers = drivers.filter(d => d.status === 'busy').length;
+    const completedOrdersWithTime = orders.filter(o => o.status === 'completed' && o.estimatedTime);
+    const averageDeliveryTime = completedOrdersWithTime.length > 0 
+      ? Math.round(completedOrdersWithTime.reduce((sum, o) => sum + o.estimatedTime, 0) / completedOrdersWithTime.length)
+      : 0;
+
+    setStats({
+      totalOrders,
+      completedOrders,
+      activeDrivers,
+      averageDeliveryTime
+    });
+  }, [orders, drivers]);
+
+  const toggleGeneration = () => {
+    setIsGenerating(!isGenerating);
+  };
+
+  return (
+    <div className="max-w-7xl mx-auto p-6 bg-gray-50 min-h-screen">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-gray-900 mb-2">Automated Order Generation & Assignment</h1>
+        <p className="text-gray-600">Real-time order generation with automatic driver assignment and routing</p>
+      </div>
+
+      {/* Control Panel */}
+      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-semibold text-gray-800">Control Panel</h2>
+          <button
+            onClick={toggleGeneration}
+            className={`flex items-center px-6 py-3 rounded-lg font-medium ${
+              isGenerating
+                ? 'bg-red-500 hover:bg-red-600 text-white'
+                : 'bg-green-500 hover:bg-green-600 text-white'
+            }`}
+          >
+            {isGenerating ? <Pause className="mr-2 h-5 w-5" /> : <Play className="mr-2 h-5 w-5" />}
+            {isGenerating ? 'Stop Auto Generation' : 'Start Auto Generation'}
+          </button>
+        </div>
+        
+        {isGenerating && (
+          <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+            <p className="text-green-700 font-medium">🟢 System is generating orders automatically at random intervals (3-10 seconds)</p>
+          </div>
+        )}
+      </div>
+
+      {/* Stats Dashboard */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <div className="flex items-center">
+            <Database className="h-8 w-8 text-blue-500 mr-3" />
+            <div>
+              <p className="text-sm font-medium text-gray-600">Total Orders</p>
+              <p className="text-2xl font-bold text-gray-900">{stats.totalOrders}</p>
+            </div>
+          </div>
+        </div>
+        
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <div className="flex items-center">
+            <Clock className="h-8 w-8 text-green-500 mr-3" />
+            <div>
+              <p className="text-sm font-medium text-gray-600">Completed</p>
+              <p className="text-2xl font-bold text-gray-900">{stats.completedOrders}</p>
+            </div>
+          </div>
+        </div>
+        
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <div className="flex items-center">
+            <Truck className="h-8 w-8 text-orange-500 mr-3" />
+            <div>
+              <p className="text-sm font-medium text-gray-600">Active Drivers</p>
+              <p className="text-2xl font-bold text-gray-900">{stats.activeDrivers}</p>
+            </div>
+          </div>
+        </div>
+        
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <div className="flex items-center">
+            <Users className="h-8 w-8 text-purple-500 mr-3" />
+            <div>
+              <p className="text-sm font-medium text-gray-600">Avg Delivery (min)</p>
+              <p className="text-2xl font-bold text-gray-900">{stats.averageDeliveryTime}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Drivers Status */}
+      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+        <h2 className="text-xl font-semibold text-gray-800 mb-4">Driver Status</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {drivers.map(driver => (
+            <div key={driver.id} className={`p-4 rounded-lg border-2 ${
+              driver.status === 'available' ? 'border-green-200 bg-green-50' : 'border-orange-200 bg-orange-50'
+            }`}>
+              <div className="flex items-center justify-between">
+                <h3 className="font-medium text-gray-900">{driver.name}</h3>
+                <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                  driver.status === 'available' 
+                    ? 'bg-green-100 text-green-800' 
+                    : 'bg-orange-100 text-orange-800'
+                }`}>
+                  {driver.status}
+                </span>
+              </div>
+              <p className="text-sm text-gray-600 mt-1">
+                📍 {driver.lat.toFixed(4)}, {driver.lng.toFixed(4)}
+              </p>
+              {driver.currentHotspot && (
+                <p className="text-sm text-gray-600">🎯 {driver.currentHotspot}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Recent Orders */}
+      <div className="bg-white rounded-lg shadow-md p-6">
+        <h2 className="text-xl font-semibold text-gray-800 mb-4">Recent Orders</h2>
+        <div className="overflow-x-auto">
+          <table className="min-w-full table-auto">
+            <thead>
+              <tr className="bg-gray-50">
+                <th className="px-4 py-2 text-left text-sm font-medium text-gray-600">Order ID</th>
+                <th className="px-4 py-2 text-left text-sm font-medium text-gray-600">Driver</th>
+                <th className="px-4 py-2 text-left text-sm font-medium text-gray-600">Status</th>
+                <th className="px-4 py-2 text-left text-sm font-medium text-gray-600">Pickup Distance</th>
+                <th className="px-4 py-2 text-left text-sm font-medium text-gray-600">Delivery Distance</th>
+                <th className="px-4 py-2 text-left text-sm font-medium text-gray-600">Total Distance</th>
+                <th className="px-4 py-2 text-left text-sm font-medium text-gray-600">Speed</th>
+                <th className="px-4 py-2 text-left text-sm font-medium text-gray-600">Est. Time</th>
+                <th className="px-4 py-2 text-left text-sm font-medium text-gray-600">Created</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {orders.slice(-10).reverse().map(order => (
+                <tr key={order.id} className="hover:bg-gray-50">
+                  <td className="px-4 py-2 text-sm text-gray-900 font-mono">{order.id.substring(0, 12)}...</td>
+                  <td className="px-4 py-2 text-sm text-gray-900">{order.driverName}</td>
+                  <td className="px-4 py-2">
+                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                      order.status === 'completed' 
+                        ? 'bg-green-100 text-green-800'
+                        : order.status === 'assigned'
+                        ? 'bg-blue-100 text-blue-800'
+                        : 'bg-yellow-100 text-yellow-800'
+                    }`}>
+                      {order.status}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2 text-sm text-gray-900">{order.pickupDistance} km</td>
+                  <td className="px-4 py-2 text-sm text-gray-900">{order.deliveryDistance} km</td>
+                  <td className="px-4 py-2 text-sm text-gray-900">{order.totalDistance} km</td>
+                  <td className="px-4 py-2 text-sm text-gray-900">{order.speed} km/h</td>
+                  <td className="px-4 py-2 text-sm text-gray-900">{order.estimatedTime} min</td>
+                  <td className="px-4 py-2 text-sm text-gray-900">
+                    {new Date(order.createdAt).toLocaleTimeString()}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        
+        {orders.length === 0 && (
+          <div className="text-center py-8">
+            <MapPin className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+            <p className="text-gray-600">No orders generated yet. Click "Start Auto Generation" to begin.</p>
+          </div>
+        )}
+      </div>
+
+      {/* Database Info */}
+      <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+        <h3 className="font-medium text-blue-900 mb-2">Database Storage Information</h3>
+        <p className="text-sm text-blue-700">
+          • All deployed drivers are saved in the database with their current locations and status<br/>
+          • Orders are automatically generated at random intervals (3-10 seconds) when active<br/>
+          • Each order is saved with: Driver ID, Speed, Pickup Distance, Delivery Distance, Total Distance, Pickup & Destination coordinates<br/>
+          • When orders are completed, drivers are automatically reassigned to waiting orders or sent to high-demand hotspots<br/>
+          • The system tracks {simulateDatabase.drivers.length} drivers and {simulateDatabase.orders.length} total orders in the database
+        </p>
+      </div>
+    </div>
+  );
+};
+
+export default AutoOrderSystem;

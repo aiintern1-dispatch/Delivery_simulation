@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delivery Simulation</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+            color: #1f2937;
+        }
+        #map {
+            height: 70vh;
+            width: 100%;
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            z-index: 1;
+        }
+        .leaflet-container {
+            font: 12px/1.5 "Helvetica Neue", Arial, Helvetica, sans-serif;
+        }
+        /* Ensure map container has height before initialization */
+        .map-container {
+            min-height: 400px;
+        }
+    </style>
+</head>
+
+<body class="p-4 sm:p-8 bg-gray-100 min-h-screen flex flex-col items-center">
+    <div class="max-w-4xl w-full bg-white p-6 sm:p-8 rounded-2xl shadow-xl flex flex-col space-y-6">
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-center text-indigo-600">
+            <span class="block">Delivery Simulation</span>
+        </h1>
+        <p class="text-center text-gray-500 text-sm sm:text-base">
+            Click on the map to set a start and end point for a simulated delivery.
+        </p>
+        
+        <div id="status-message" class="text-center p-3 text-sm font-semibold rounded-lg">
+            <span class="text-indigo-500">Loading map...</span>
+        </div>
+
+        <div class="map-container">
+            <div id="map" class="rounded-lg shadow-md border border-gray-200"></div>
+        </div>
+
+        <div class="flex flex-col sm:flex-row justify-center space-y-4 sm:space-y-0 sm:space-x-4">
+            <button id="reset-btn" class="px-6 py-3 bg-red-500 text-white font-bold rounded-lg shadow hover:bg-red-600 transition-colors duration-200">
+                Reset
+            </button>
+            <button id="deploy-btn" class="px-6 py-3 bg-indigo-500 text-white font-bold rounded-lg shadow hover:bg-indigo-600 transition-colors duration-200">
+                Deploy Drivers
+            </button>
+            <button id="start-auto-orders-btn" class="px-6 py-3 bg-green-500 text-white font-bold rounded-lg shadow hover:bg-green-600 transition-colors duration-200">
+                Start Auto Orders
+            </button>
+            <button id="stop-auto-orders-btn" class="px-6 py-3 bg-yellow-500 text-white font-bold rounded-lg shadow hover:bg-yellow-600 transition-colors duration-200">
+                Stop Auto Orders
+            </button>
+            <button id="start-delivery-btn" class="px-6 py-3 bg-purple-500 text-white font-bold rounded-lg shadow hover:bg-purple-600 transition-colors duration-200" disabled>
+                Start Delivery Animation
+            </button>
+            <button id="view-db-btn" class="px-6 py-3 bg-gray-800 text-white font-bold rounded-lg shadow hover:bg-black transition-colors duration-200">
+                View DB
+            </button>
+        </div>
+
+        <!-- Heatmap Controls -->
+        <div class="flex flex-wrap gap-3 justify-center items-center mt-4">
+            <button id="show-driver-heatmap-btn" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-semibold">
+                Show Driver Heatmap
+            </button>
+            <button id="hide-driver-heatmap-btn" class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors font-semibold">
+                Hide Driver Heatmap
+            </button>
+            <button id="show-order-heatmap-btn" class="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors font-semibold">
+                Show Order Heatmap
+            </button>
+            <button id="hide-order-heatmap-btn" class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors font-semibold">
+                Hide Order Heatmap
+            </button>
+        </div>
+
+        <!-- Order Information Display -->
+        <div id="order-info-panel" class="hidden bg-white p-4 rounded-lg shadow-md border border-gray-200 mt-4">
+            <h3 class="text-lg font-semibold mb-3">Order Assignments & Details</h3>
+            <div id="order-details" class="space-y-3">
+                <!-- Order details will be populated here -->
+            </div>
+        </div>
+<!-- API Info -->
+<div class="bg-gray-50 p-4 rounded-lg">
+    <h3 class="font-semibold mb-2">API Endpoint for Order Devices</h3>
+    <div class="text-sm bg-black text-green-400 p-3 rounded font-mono">
+        POST http://your-server:8000/api/orders<br>
+        Content-Type: application/json<br>
+        Body: {"pickup": {"lat": 18.5204, "lon": 73.8567}, "destination": {"lat": 18.5304, "lon": 73.8667}}
+    </div>
+    <div class="mt-2 text-xs text-gray-600">
+        Order devices can send orders to this endpoint. The system will automatically assign the nearest available driver.
+    </div>
+</div>
+        <!-- DB Modal -->
+        <div id="db-modal" class="hidden fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+            <div class="bg-white w-11/12 max-w-5xl rounded-xl shadow-2xl overflow-hidden">
+                <div class="flex items-center justify-between px-5 py-3 border-b">
+                    <h3 class="text-xl font-semibold">Database Viewer</h3>
+                    <button id="db-modal-close" class="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">Close</button>
+                </div>
+                <div class="p-5 space-y-6 max-h-[70vh] overflow-y-auto">
+                    <div>
+                        <h4 class="font-semibold mb-2">Drivers</h4>
+                        <div class="overflow-x-auto border rounded">
+                            <table class="min-w-full text-sm">
+                                <thead class="bg-gray-50">
+                                    <tr>
+                                        <th class="px-3 py-2 text-left">ID</th>
+                                        <th class="px-3 py-2 text-left">Name</th>
+                                        <th class="px-3 py-2 text-left">Latitude</th>
+                                        <th class="px-3 py-2 text-left">Longitude</th>
+                                        <th class="px-3 py-2 text-left">Hex ID</th>
+                                        <th class="px-3 py-2 text-left">Status</th>
+                                        <th class="px-3 py-2 text-left">Updated</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="db-drivers-body" class="divide-y"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div>
+                        <h4 class="font-semibold mb-2">Orders</h4>
+                        <div class="overflow-x-auto border rounded">
+                            <table class="min-w-full text-sm">
+                                <thead class="bg-gray-50">
+                                    <tr>
+                                        <th class="px-3 py-2 text-left">ID</th>
+                                        <th class="px-3 py-2 text-left">Driver</th>
+                                        <th class="px-3 py-2 text-left">Status</th>
+                                        <th class="px-3 py-2 text-left">Pickup</th>
+                                        <th class="px-3 py-2 text-left">Destination</th>
+                                        <th class="px-3 py-2 text-left">Pickup Dist (m)</th>
+                                        <th class="px-3 py-2 text-left">Delivery Dist (m)</th>
+                                        <th class="px-3 py-2 text-left">Total Dist (m)</th>
+                                        <th class="px-3 py-2 text-left">Speed (km/h)</th>
+                                        <th class="px-3 py-2 text-left">ETA (min)</th>
+                                        <th class="px-3 py-2 text-left">Created</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="db-orders-body" class="divide-y"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+
+    <!-- Leaflet Heatmap Plugin -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat/0.2.0/leaflet-heat.js"></script>
+
+    <script>
+        // Function to update the status message (defined in global scope)
+        function updateStatus(message, color = 'text-indigo-500') {
+            const statusMessage = document.getElementById('status-message');
+            if (statusMessage) {
+                statusMessage.textContent = message;
+                statusMessage.className = `text-center p-3 text-sm font-semibold rounded-lg ${color}`;
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            // Check if Leaflet is available before trying to use it
+            if (typeof L === 'undefined' || typeof L.map !== 'function') {
+                console.error("Leaflet library is not available. Please check the CDN link or network connection.");
+                updateStatus('Error: Map library failed to load. Please refresh the page.', 'text-red-600');
+                return;
+            }
+
+            // Small delay to ensure DOM is fully rendered
+            setTimeout(initializeMap, 100);
+        });
+
+        function initializeMap() {
+            // Define the map and its initial view
+            const map = L.map('map').setView([18.525, 73.847], 14); // Centered on Shivajinagar
+            
+            // Check if map initialized correctly
+            if (!map) {
+                updateStatus('Error: Failed to initialize map.', 'text-red-600');
+                return;
+            }
+            
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(map);
+
+            // Force a resize of the map to ensure it renders correctly
+            setTimeout(() => {
+                map.invalidateSize();
+
+                updateStatus('Deploy drivers to start the delivery simulation.');
+            }, 100);
+
+            const statusMessage = document.getElementById('status-message');
+            const resetBtn = document.getElementById('reset-btn');
+            const deployBtn = document.getElementById('deploy-btn');
+            const startAutoOrdersBtn = document.getElementById('start-auto-orders-btn');
+            const stopAutoOrdersBtn = document.getElementById('stop-auto-orders-btn');
+            const startDeliveryBtn = document.getElementById('start-delivery-btn');
+            const viewDbBtn = document.getElementById('view-db-btn');
+            const dbModal = document.getElementById('db-modal');
+            const dbModalClose = document.getElementById('db-modal-close');
+            
+            // Store deployed driver markers as { id, marker }
+            let driverMarkers = [];
+            let orderMarkers = [];
+            let orderAssignments = [];
+            let isAnimating = false;
+            let animationRoutes = [];
+            let autoOrderInterval = null;
+            let autoOrderStatus = false;
+
+            // Inline SVG for a simple car icon
+            const driverIconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="#374151" d="M135.2 117.4L109.1 270.2C106.1 286.9 119.7 304 136.6 304H375.4C392.3 304 405.9 286.9 402.9 270.2L376.8 117.4C373.9 101.8 358.8 90.7 342.3 90.7H170.7C154.2 90.7 139.1 101.8 135.2 117.4zM0 432C0 458.5 21.5 480 48 480H464C490.5 480 512 458.5 512 432C512 405.5 490.5 384 464 384H48C21.5 384 0 405.5 0 432zM448 336H64C28.7 336 0 362.7 0 392C0 421.3 28.7 448 64 448H448c35.3 0 64-26.7 64-56C512 362.7 483.3 336 448 336z"/></svg>`;
+            const driverIcon = L.divIcon({
+                className: 'custom-driver-icon',
+                html: `<div style="width: 24px; height: 24px; display: flex; justify-content: center; align-items: center; background-color: #3B82F6; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">${driverIconSvg}</div>`,
+                iconSize: [24, 24],
+                iconAnchor: [12, 12]
+            });
+           
+            // Inline SVG for a destination pin
+            const endIconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><path fill="#EF4444" d="M215.7 499.2C267.4 466.7 308.5 411.3 333.3 349.9C358.1 288.5 367.6 222.9 360.5 158.3C353.4 93.73 323.3 36.33 277.6 1.765C231.9 -32.8 174.9 -9.513 135.2 24.38L32 153.2L159.2 247.9L161.4 249.2L204.8 281.6C216.5 290.4 228.6 298.5 241.2 305.8L307.7 353.6C302.2 363.3 296.2 372.7 289.7 381.9C258.9 428.1 220.8 467.2 178.6 492.3C136.4 517.3 87.23 527.2 40.54 519.8C18.15 516.2 0 495.6 0 472.3V440c0-13.25 10.75-24 24-24h32C71.39 416 88.94 425.2 97.46 440.6C123.6 486.2 165.2 516.3 215.7 499.2z"/></svg>`;
+            const endIcon = L.divIcon({
+                className: 'custom-end-icon',
+                html: `<div style="width: 32px; height: 32px; display: flex; justify-content: center; align-items: center; background-color: #EF4444; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">${endIconSvg}</div>`,
+                iconSize: [32, 32],
+                iconAnchor: [16, 16]
+            });
+
+            const fleetIcon = L.divIcon({
+                className: 'custom-fleet-icon',
+                html: `<div style="width: 14px; height: 14px; background-color: #10B981; border: 2px solid white; border-radius: 50%; box-shadow: 0 1px 2px rgba(0,0,0,0.3);"></div>`,
+                iconSize: [14, 14],
+                iconAnchor: [7, 7]
+            });
+
+            // Deploy drivers
+            deployBtn.addEventListener('click', () => {
+                updateStatus('Deploying drivers...', 'text-yellow-600');
+                fetch('/api/deploy_drivers', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+                    .then(r => r.json())
+                    .then(data => {
+                        if (!data.drivers) throw new Error('No drivers returned');
+                        clearDriverMarkers();
+                        data.drivers.forEach(d => {
+                            const m = L.marker([d.location.lat, d.location.lon], { icon: fleetIcon }).addTo(map);
+                            m.bindPopup(`${d.name}`);
+
+                            driverMarkers.push({ id: d.id, marker: m, name: d.name, driver: d });
+                        });
+                        updateStatus(`Deployed ${data.drivers.length} drivers.`, 'text-green-600');
+                    })
+                    .catch(err => {
+                        console.error(err);
+                        updateStatus('Failed to deploy drivers (is FastAPI running on 8000?)', 'text-red-600');
+                    });
+            });
+
+            // Start auto orders button
+            startAutoOrdersBtn.addEventListener('click', startAutoOrders);
+            
+            // Stop auto orders button
+            stopAutoOrdersBtn.addEventListener('click', stopAutoOrders);
+
+            // Start delivery animation button
+            startDeliveryBtn.addEventListener('click', () => {
+                if (isAnimating) {
+                    updateStatus('Animation already in progress', 'text-yellow-600');
+                    return;
+                }
+                
+                if (orderAssignments.length === 0) {
+                    updateStatus('No driver assignments found. Please wait for orders to be assigned.', 'text-red-600');
+                    return;
+                }
+                
+                startDeliveryAnimation();
+            });
+
+            // View DB button
+            viewDbBtn.addEventListener('click', async () => {
+                try {
+                    await loadDbModalData();
+                    dbModal.classList.remove('hidden');
+                } catch (e) {
+                    console.error('Failed to load DB data', e);
+                }
+            });
+            dbModalClose.addEventListener('click', () => dbModal.classList.add('hidden'));
+            dbModal.addEventListener('click', (e) => { if (e.target === dbModal) dbModal.classList.add('hidden'); });
+
+            // Auto orders functionality
+            function startAutoOrders() {
+                updateStatus('Starting automatic order generation...', 'text-green-600');
+                
+                fetch('/api/start_auto_orders', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            updateStatus('Automatic order generation started', 'text-green-600');
+                            autoOrderStatus = true;
+                            
+                            // Start polling for new orders
+                            pollForNewOrders();
+                        } else {
+                            updateStatus('Failed to start auto orders: ' + data.error, 'text-red-600');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error starting auto orders:', error);
+                        updateStatus('Failed to start auto orders', 'text-red-600');
+                    });
+            }
+
+            function stopAutoOrders() {
+                updateStatus('Stopping automatic order generation...', 'text-yellow-600');
+                
+                fetch('/api/stop_auto_orders', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            updateStatus('Automatic order generation stopped', 'text-green-600');
+                            autoOrderStatus = false;
+                            
+                            // Stop polling
+                            if (autoOrderInterval) {
+                                clearInterval(autoOrderInterval);
+                                autoOrderInterval = null;
+                            }
+                        } else {
+                            updateStatus('Failed to stop auto orders: ' + data.error, 'text-red-600');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error stopping auto orders:', error);
+                        updateStatus('Failed to stop auto orders', 'text-red-600');
+                    });
+            }
+
+            function pollForNewOrders() {
+                if (autoOrderInterval) {
+                    clearInterval(autoOrderInterval);
+                }
+                
+                // Poll for new orders every 3 seconds
+                autoOrderInterval = setInterval(() => {
+                    fetch('/api/latest_auto_orders')
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.success && data.orders && data.orders.length > 0) {
+                                // Process new orders
+                                processNewOrders(data.orders);
+                            }
+                        })
+                        .catch(error => console.error('Error polling for orders:', error));
+                }, 3000);
+            }
+
+            async function loadDbModalData() {
+                const driversRes = await fetch('/api/drivers_db');
+                const ordersRes = await fetch('/api/orders_db');
+                const driversData = await driversRes.json();
+                const ordersData = await ordersRes.json();
+
+                const driversBody = document.getElementById('db-drivers-body');
+                const ordersBody = document.getElementById('db-orders-body');
+                driversBody.innerHTML = '';
+                ordersBody.innerHTML = '';
+
+                if (driversData.success && Array.isArray(driversData.drivers)) {
+                    driversData.drivers.forEach(d => {
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td class="px-3 py-2 font-mono">${d.id}</td>
+                            <td class="px-3 py-2">${d.name}</td>
+                            <td class="px-3 py-2">${(d.latitude||0).toFixed(6)}</td>
+                            <td class="px-3 py-2">${(d.longitude||0).toFixed(6)}</td>
+                            <td class="px-3 py-2">${d.hex_id || ''}</td>
+                            <td class="px-3 py-2">${d.status}</td>
+                            <td class="px-3 py-2">${d.updated_at || ''}</td>
+                        `;
+                        driversBody.appendChild(tr);
+                    });
+                }
+
+                if (ordersData.success && Array.isArray(ordersData.orders)) {
+                    ordersData.orders.forEach(o => {
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td class="px-3 py-2 font-mono">${o.id}</td>
+                            <td class="px-3 py-2">${o.driver_name || o.driver_id || ''}</td>
+                            <td class="px-3 py-2">${o.status}</td>
+                            <td class="px-3 py-2">${(o.pickup_latitude||0).toFixed(5)}, ${(o.pickup_longitude||0).toFixed(5)}</td>
+                            <td class="px-3 py-2">${(o.destination_latitude||0).toFixed(5)}, ${(o.destination_longitude||0).toFixed(5)}</td>
+                            <td class="px-3 py-2">${o.pickup_distance ? o.pickup_distance.toFixed(0) : '-'}</td>
+                            <td class="px-3 py-2">${o.delivery_distance ? o.delivery_distance.toFixed(0) : '-'}</td>
+                            <td class="px-3 py-2">${o.total_distance ? o.total_distance.toFixed(0) : '-'}</td>
+                            <td class="px-3 py-2">${o.average_speed ?? '-'}</td>
+                            <td class="px-3 py-2">${o.eta_minutes ?? '-'}</td>
+                            <td class="px-3 py-2">${o.created_at || ''}</td>
+                        `;
+                        ordersBody.appendChild(tr);
+                    });
+                }
+            }
+
+            function processNewOrders(orders) {
+                orders.forEach(order => {
+                    // Check if this order is already displayed
+                    const existingOrder = orderMarkers.find(om => om.id === order.id);
+                    if (!existingOrder) {
+                        // Add new order to the map
+                        addOrderToMap(order);
+                        
+                        // Add to order assignments
+                        if (order.driver_id) {
+                            // Find the driver object
+                            const driverObj = driverMarkers.find(dm => dm.driver.id === order.driver_id);
+                            
+                            const assignment = {
+                                orderId: order.id,
+                                driverId: order.driver_id,
+                                driverName: order.driver_name || `Driver ${order.driver_id}`,
+                                pickupDistance: order.pickup_distance,
+                                deliveryDistance: order.delivery_distance,
+                                totalDistance: order.total_distance,
+                                etaMinutes: order.eta_minutes,
+                                averageSpeedKmh: order.average_speed,
+                                order: order,
+                                driver: driverObj ? driverObj.driver : null
+                            };
+                            
+                            orderAssignments.push(assignment);
+                            
+                            // Update the order info panel
+                            displayOrderAssignments(orderAssignments);
+                            
+                            // Enable delivery animation button if not already enabled
+                            startDeliveryBtn.disabled = false;
+                        }
+                    }
+                });
+            }
+
+            function addOrderToMap(order) {
+                // Create pickup and destination icons
+                const pickupIcon = L.divIcon({
+                    className: 'pickup-marker',
+                    html: '<div style="background-color: #10b981; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; font-weight: bold; color: white; font-size: 10px;">P</div>',
+                    iconSize: [16, 16],
+                    iconAnchor: [8, 8]
+                });
+                
+                const destinationIcon = L.divIcon({
+                    className: 'destination-marker',
+                    html: '<div style="background-color: #ef4444; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; font-weight: bold; color: white; font-size: 10px;">D</div>',
+                    iconSize: [16, 16],
+                    iconAnchor: [8, 8]
+                });
+                
+                // Add pickup marker
+                const pickupMarker = L.marker([order.pickup.lat, order.pickup.lon], { icon: pickupIcon }).addTo(map);
+                pickupMarker.bindPopup(`
+                    <div class="text-sm">
+                        <strong>Order ${order.id} - Pickup</strong><br>
+                        Location: ${order.pickup.lat.toFixed(4)}, ${order.pickup.lon.toFixed(4)}<br>
+                        Driver: ${order.driver_name || 'Not assigned'}
+                    </div>
+                `);
+                
+                // Add destination marker
+                const destMarker = L.marker([order.destination.lat, order.destination.lon], { icon: destinationIcon }).addTo(map);
+                destMarker.bindPopup(`
+                    <div class="text-sm">
+                        <strong>Order ${order.id} - Destination</strong><br>
+                        Location: ${order.destination.lat.toFixed(4)}, ${order.destination.lon.toFixed(4)}
+                    </div>
+                `);
+                
+                orderMarkers.push({ 
+                    id: order.id, 
+                    pickupMarker: pickupMarker, 
+                    destMarker: destMarker, 
+                    order: order 
+                });
+                
+                // Auto-show order heatmap when new orders are added
+                if (!orderHeatmapLayer) {
+                    document.getElementById('show-order-heatmap-btn').click();
+                }
+            }
+
+            function calculateDistance(lat1, lon1, lat2, lon2) {
+                const R = 6371000; // Earth's radius in meters
+                const dLat = (lat2 - lat1) * Math.PI / 180;
+                const dLon = (lon2 - lon1) * Math.PI / 180;
+                const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                        Math.sin(dLon/2) * Math.sin(dLon/2);
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                return R * c; // Distance in meters
+            }
+
+            function displayOrderAssignments(assignments) {
+                const orderInfoPanel = document.getElementById('order-info-panel');
+                const orderDetails = document.getElementById('order-details');
+                
+                if (assignments.length === 0) {
+                    orderInfoPanel.classList.add('hidden');
+                    return;
+                }
+                
+                orderDetails.innerHTML = assignments.map(assignment => `
+                    <div class="bg-gray-50 p-3 rounded-lg border">
+                        <div class="flex justify-between items-start mb-2">
+                            <h4 class="font-semibold text-lg">${assignment.orderId}</h4>
+                            <span class="text-sm text-gray-600">ETA: ${assignment.etaMinutes} min</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 text-sm">
+                            <div>
+                                <span class="font-medium">Driver:</span> ${assignment.driverName}
+                            </div>
+                            <div>
+                                <span class="font-medium">Speed:</span> ${assignment.averageSpeedKmh} km/h
+                            </div>
+                            <div>
+                                <span class="font-medium">Pickup Distance:</span> ${assignment.pickupDistance.toFixed(0)}m
+                            </div>
+                            <div>
+                                <span class="font-medium">Delivery Distance:</span> ${assignment.deliveryDistance.toFixed(0)}m
+                            </div>
+                            <div class="col-span-2">
+                                <span class="font-medium">Total Distance:</span> ${assignment.totalDistance.toFixed(0)}m
+                            </div>
+                        </div>
+                        <div class="mt-2 text-xs text-gray-500">
+                            <div>Pickup: ${assignment.order.pickup.lat.toFixed(4)}, ${assignment.order.pickup.lon.toFixed(4)}</div>
+                            <div>Destination: ${assignment.order.destination.lat.toFixed(4)}, ${assignment.order.destination.lon.toFixed(4)}</div>
+                        </div>
+                    </div>
+                `).join('');
+                
+                orderInfoPanel.classList.remove('hidden');
+            }
+
+            async function startDeliveryAnimation() {
+                isAnimating = true;
+                startDeliveryBtn.disabled = true;
+                updateStatus('Starting delivery animation...', 'text-purple-600');
+                
+                // Clear existing routes
+                animationRoutes.forEach(route => {
+                    if (route.pickupRoute) map.removeLayer(route.pickupRoute);
+                    if (route.deliveryRoute) map.removeLayer(route.deliveryRoute);
+                });
+                animationRoutes = [];
+                
+                // Process all assignments simultaneously
+                updateStatus(`Starting simultaneous delivery animations for ${orderAssignments.length} orders...`, 'text-blue-600');
+                const animationPromises = orderAssignments.map((assignment, i) => {
+                    return animateDriverDelivery(assignment, 0); // No delay - all start simultaneously
+                });
+                
+                // Wait for all animations to complete
+                try {
+                    await Promise.all(animationPromises);
+                } catch (error) {
+                    console.error('Error in simultaneous animations:', error);
+                }
+                
+                updateStatus('All delivery animations completed!', 'text-green-600');
+                isAnimating = false;
+                startDeliveryBtn.disabled = false;
+            }
+
+            async function animateDriverDelivery(assignment, delay) {
+                return new Promise((resolve) => {
+                    setTimeout(async () => {
+                        try {
+                            // Step 1: Get route from driver to pickup
+                            const pickupRoute = await getOSRMRoute(
+                                assignment.driver.location.lat, 
+                                assignment.driver.location.lon,
+                                assignment.order.pickup.lat, 
+                                assignment.order.pickup.lon
+                            );
+                            
+                            if (pickupRoute) {
+                                // Animate driver to pickup
+                                await animateDriverToPickup(assignment, pickupRoute);
+                                
+                                // Wait 3 seconds at pickup
+                                await new Promise(resolve => setTimeout(resolve, 3000));
+                                
+                                // Step 2: Get route from pickup to destination
+                                const deliveryRoute = await getOSRMRoute(
+                                    assignment.order.pickup.lat, 
+                                    assignment.order.pickup.lon,
+                                    assignment.order.destination.lat, 
+                                    assignment.order.destination.lon
+                                );
+                                
+                                if (deliveryRoute) {
+                                    // Animate driver to destination
+                                    await animateDriverToDestination(assignment, deliveryRoute);
+                                    
+                                    // Mark delivery as complete
+                                    await completeDelivery(assignment.orderId, assignment.driverId);
+                                }
+                            }
+                            
+                            resolve();
+                        } catch (error) {
+                            console.error('Error in delivery animation:', error);
+                            resolve();
+                        }
+                    }, delay);
+                });
+            }
+
+            async function getOSRMRoute(startLat, startLon, endLat, endLon) {
+                try {
+                    const response = await fetch(`/api/osrm_route?start_lat=${startLat}&start_lon=${startLon}&end_lat=${endLat}&end_lon=${endLon}`);
+                    const data = await response.json();
+                    
+                    if (data.success && data.route && data.route.geometry) {
+                        return data.route.geometry.coordinates.map(coord => [coord[1], coord[0]]); // Convert [lon, lat] to [lat, lon]
+                    }
+                    return null;
+                } catch (error) {
+                    console.error('Error getting OSRM route:', error);
+                    return null;
+                }
+            }
+
+            async function completeDelivery(orderId, driverId) {
+                try {
+                    const response = await fetch('/api/complete_delivery', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            order_id: orderId,
+                            driver_id: driverId
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    if (data.success) {
+                        console.log(`Delivery ${orderId} completed successfully`);
+                    } else {
+                        console.error(`Failed to complete delivery ${orderId}:`, data.error);
+                    }
+                } catch (error) {
+                    console.error('Error completing delivery:', error);
+                }
+            }
+
+            async function animateDriverToPickup(assignment, routeCoordinates) {
+                return new Promise((resolve) => {
+                    // Create route line for pickup
+                    const pickupRoute = L.polyline(routeCoordinates, {
+                        color: 'blue',
+                        weight: 3,
+                        opacity: 0.7
+                    }).addTo(map);
+                    
+                    animationRoutes.push({ pickupRoute });
+                    
+                    // Find driver marker
+                    const driverMarker = driverMarkers.find(dm => dm.driver.id === assignment.driverId);
+                    if (!driverMarker) {
+                        resolve();
+                        return;
+                    }
+                    
+                    // Animate driver along route
+                    animateMarkerAlongRoute(driverMarker.marker, routeCoordinates, 2000, () => {
+                        updateStatus(`Driver ${assignment.driverName} reached pickup for ${assignment.orderId}`, 'text-blue-600');
+                        resolve();
+                    });
+                });
+            }
+
+            async function animateDriverToDestination(assignment, routeCoordinates) {
+                return new Promise((resolve) => {
+                    // Create route line for delivery
+                    const deliveryRoute = L.polyline(routeCoordinates, {
+                        color: 'green',
+                        weight: 3,
+                        opacity: 0.7
+                    }).addTo(map);
+                    
+                    animationRoutes.push({ deliveryRoute });
+                    
+                    // Find driver marker
+                    const driverMarker = driverMarkers.find(dm => dm.driver.id === assignment.driverId);
+                    if (!driverMarker) {
+                        resolve();
+                        return;
+                    }
+                    
+                    // Animate driver along route
+                    animateMarkerAlongRoute(driverMarker.marker, routeCoordinates, 2000, () => {
+                        updateStatus(`Driver ${assignment.driverName} delivered ${assignment.orderId}`, 'text-green-600');
+                        resolve();
+                    });
+                });
+            }
+
+            function animateMarkerAlongRoute(marker, coordinates, duration, onComplete) {
+                if (!coordinates || coordinates.length < 2) {
+                    if (onComplete) onComplete();
+                    return;
+                }
+                
+                let currentIndex = 0;
+                const totalPoints = coordinates.length;
+                const interval = duration / totalPoints;
+                
+                const animate = () => {
+                    if (currentIndex >= totalPoints) {
+                        if (onComplete) onComplete();
+                        return;
+                    }
+                    
+                    const [lat, lon] = coordinates[currentIndex];
+                    marker.setLatLng([lat, lon]);
+                    
+                    // Update the driver's location in the driverMarkers array
+                    const driverMarkerObj = driverMarkers.find(dm => dm.marker === marker);
+                    if (driverMarkerObj) {
+                        driverMarkerObj.driver.location.lat = lat;
+                        driverMarkerObj.driver.location.lon = lon;
+                    }
+                    
+                    currentIndex++;
+                    setTimeout(animate, interval);
+                };
+                
+                animate();
+            }
+
+            function clearDriverMarkers() {
+                driverMarkers.forEach(obj => map.removeLayer(obj.marker));
+                driverMarkers = [];
+            }
+
+            function clearOrderMarkers() {
+                orderMarkers.forEach(obj => {
+                    map.removeLayer(obj.pickupMarker);
+                    map.removeLayer(obj.destMarker);
+                });
+                orderMarkers = [];
+            }
+
+            function clearAnimationRoutes() {
+                animationRoutes.forEach(route => {
+                    if (route.pickupRoute) map.removeLayer(route.pickupRoute);
+                    if (route.deliveryRoute) map.removeLayer(route.deliveryRoute);
+                });
+                animationRoutes = [];
+            }
+
+            // "Reset" button handler
+            resetBtn.addEventListener('click', () => {
+                clearDriverMarkers();
+                clearOrderMarkers();
+                clearAnimationRoutes();
+                orderAssignments = [];
+                isAnimating = false;
+                startDeliveryBtn.disabled = true;
+                
+                // Stop auto orders if running
+                if (autoOrderStatus) {
+                    stopAutoOrders();
+                }
+                
+                updateStatus('Map cleared. Deploy drivers to start simulation.');
+            });
+
+            // Heatmap functionality
+            let driverHeatmapLayer = null;
+            let orderHeatmapLayer = null;
+
+            // Show driver heatmap
+            document.getElementById('show-driver-heatmap-btn').addEventListener('click', function() {
+                fetch('/api/drivers')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.drivers && data.drivers.length > 0) {
+                            // Clear existing driver heatmap
+                            if (driverHeatmapLayer) {
+                                map.removeLayer(driverHeatmapLayer);
+                            }
+
+                            // Create heatmap data points
+                            const heatmapData = data.drivers.map(driver => [
+                                driver.location.lat,
+                                driver.location.lon,
+                                1 // intensity
+                            ]);
+
+                            // Add heatmap layer
+                            driverHeatmapLayer = L.heatLayer(heatmapData, {
+                                radius: 25,
+                                blur: 15,
+                                maxZoom: 17,
+                                max: 1.0,
+                                gradient: {
+                                    0.4: 'blue',
+                                    0.6: 'cyan',
+                                    0.7: 'lime',
+                                    0.8: 'yellow',
+                                    1.0: 'red'
+                                }
+                            }).addTo(map);
+
+                            updateStatus(`Showing driver heatmap with ${data.drivers.length} drivers`, 'text-red-600');
+                        } else {
+                            updateStatus('No drivers available for heatmap', 'text-gray-600');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error fetching drivers:', error);
+                        updateStatus('Error loading driver heatmap', 'text-red-600');
+                    });
+            });
+
+            // Hide driver heatmap
+            document.getElementById('hide-driver-heatmap-btn').addEventListener('click', function() {
+                if (driverHeatmapLayer) {
+                    map.removeLayer(driverHeatmapLayer);
+                    driverHeatmapLayer = null;
+                }
+                updateStatus('Driver heatmap hidden', 'text-gray-600');
+            });
+
+            // Show order heatmap
+            document.getElementById('show-order-heatmap-btn').addEventListener('click', function() {
+                fetch('/api/orders')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.orders && data.orders.length > 0) {
+                            // Clear existing order heatmap
+                            if (orderHeatmapLayer) {
+                                map.removeLayer(orderHeatmapLayer);
+                            }
+
+                            // Create heatmap data points based on order pickup locations
+                            const heatmapData = data.orders.map(order => [
+                                order.pickup.lat,
+                                order.pickup.lon,
+                                1 // intensity
+                            ]);
+
+                            // Add heatmap layer
+                            orderHeatmapLayer = L.heatLayer(heatmapData, {
+                                radius: 30,
+                                blur: 20,
+                                maxZoom: 17,
+                                max: 1.0,
+                                gradient: {
+                                    0.2: 'blue',
+                                    0.4: 'cyan',
+                                    0.6: 'lime',
+                                    0.8: 'yellow',
+                                    1.0: 'red'
+                                }
+                            }).addTo(map);
+
+                            updateStatus(`Showing order heatmap with ${data.orders.length} orders`, 'text-yellow-600');
+                        } else {
+                            updateStatus('No orders available for heatmap', 'text-gray-600');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error fetching orders:', error);
+                        updateStatus('Error loading order heatmap', 'text-red-600');
+                    });
+            });
+
+            // Hide order heatmap
+            document.getElementById('hide-order-heatmap-btn').addEventListener('click', function() {
+                if (orderHeatmapLayer) {
+                    map.removeLayer(orderHeatmapLayer);
+                    orderHeatmapLayer = null;
+                }
+                updateStatus('Order heatmap hidden', 'text-gray-600');
+            });
+        }
+    </script>
+</body>
+</html>
